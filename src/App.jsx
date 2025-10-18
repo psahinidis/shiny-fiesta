@@ -1,111 +1,248 @@
-import React, { useEffect, useState } from 'react';
-import WordCloud2 from './components/WordCloud2';
+import React, { useMemo, useState } from "react";
+import WordCloud2 from "./components/WordCloud2";
 
-const STORAGE_KEY = 'activity-tracker:items:v1';
+const STORAGE_KEY = "activity-tracker:sessions:v1";
+const DATE_KEY    = "activity-tracker:lastDate:v1";
+
+/* ---------------- date helpers ---------------- */
+const toISODate = (d) => {
+  const dt = d instanceof Date ? d : new Date(d);
+  const y = dt.getFullYear();
+  const m = String(dt.getMonth() + 1).padStart(2, "0");
+  const day = String(dt.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
+const addDays = (iso, n) => {
+  const d = new Date(iso + "T00:00:00");
+  d.setDate(d.getDate() + n);
+  return toISODate(d);
+};
+const pretty = (iso) =>
+  new Date(iso + "T00:00:00").toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+
+/* aggregate a day's sessions -> [{text,value}] */
+function aggregateForDate(sessions, isoDate) {
+  const map = new Map();
+  for (const s of sessions) {
+    if (s.dateISO !== isoDate) continue;
+    const key = s.activity.trim();
+    map.set(key, (map.get(key) || 0) + s.minutes);
+  }
+  return Array.from(map, ([text, value]) => ({ text, value }));
+}
 
 export default function App() {
-  // items are aggregated entries: [{ text, value }]
-  const [items, setItems] = useState([]);
-  const [activity, setActivity] = useState('');
-  const [minutes, setMinutes] = useState('');
-
-  // load saved items on first mount
-  useEffect(() => {
+  /** Load from localStorage synchronously (strict-mode safe) */
+  const [sessions, setSessions] = useState(() => {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) setItems(parsed);
-    } catch (e) {
-      console.warn('Failed to load saved items', e);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
     }
-  }, []);
+  });
 
-  // save whenever items change
-  useEffect(() => {
+  const [dateISO, setDateISO] = useState(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-    } catch (e) {
-      console.warn('Failed to save items', e);
+      return localStorage.getItem(DATE_KEY) || toISODate(new Date());
+    } catch {
+      return toISODate(new Date());
     }
-  }, [items]);
+  });
 
-  // add/merge an activity
+  // simple form state
+  const [activity, setActivity] = useState("");
+  const [minutes, setMinutes] = useState("");
+  const [error, setError] = useState("");
+
+  /** Save on change */
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions));
+    } catch {}
+  }, [sessions]);
+
+  /** Remember last viewed date */
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(DATE_KEY, dateISO);
+    } catch {}
+  }, [dateISO]);
+
+  const todayISO = toISODate(new Date());
+  const isFuture = dateISO > todayISO;        // ISO YYYY-MM-DD compares correctly as strings
+  const atToday  = dateISO === todayISO;
+
+  const cloudData = useMemo(() => aggregateForDate(sessions, dateISO), [sessions, dateISO]);
+
   function addSession(e) {
     e.preventDefault();
+    setError("");
+    if (isFuture) {
+      return setError("You can’t add sessions for a future date.");
+    }
     const name = activity.trim();
     const mins = Number(minutes);
-    if (!name || !Number.isFinite(mins) || mins <= 0) return;
+    if (!name) return setError("Enter an activity.");
+    if (!Number.isFinite(mins) || mins <= 0) return setError("Minutes must be > 0.");
 
-    setItems(prev => {
-      const idx = prev.findIndex(x => x.text.toLowerCase() === name.toLowerCase());
-      if (idx >= 0) {
-        const next = [...prev];
-        next[idx] = { ...next[idx], value: next[idx].value + mins };
-        return next;
-      }
-      return [...prev, { text: name, value: mins }];
-    });
-
-    setActivity('');
-    setMinutes('');
+    const newSession = {
+      id: (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now() + Math.random()),
+      activity: name,
+      minutes: mins,
+      dateISO,
+    };
+    setSessions(prev => [...prev, newSession]);
+    setActivity("");
+    setMinutes("");
   }
 
+  function clearDay() {
+    if (!confirm(`Clear all entries for ${pretty(dateISO)}?`)) return;
+    setSessions(prev => prev.filter(s => s.dateISO !== dateISO));
+  }
+
+  function clearAll() {
+    if (!confirm("Clear ALL saved sessions (all days)?")) return;
+    setSessions([]);
+    try { localStorage.removeItem(STORAGE_KEY); } catch {}
+  }
+
+  // button styles
+  const btn = {
+    padding: "8px 12px",
+    borderRadius: 10,
+    border: "1px solid #e5e7eb",
+    background: "#f9fafb",
+    cursor: "pointer",
+  };
+  const btnDisabled = { ...btn, opacity: 0.5, cursor: "not-allowed" };
+
   return (
-    <div style={{ padding: '32px 24px', maxWidth: 1200, margin: '0 auto' }}>
-      <h1 style={{ fontSize: 48, fontWeight: 800, marginBottom: 16 }}>Activity Tracker (MVP)</h1>
+    <div style={{ padding: "28px 20px", maxWidth: 1100, margin: "0 auto" }}>
+      {/* header: date nav + picker */}
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <h1 style={{ fontSize: 32, fontWeight: 900, marginRight: "auto" }}>Activity Tracker</h1>
 
-      <form onSubmit={addSession} style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 24 }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <label style={{ fontSize: 14, color: '#555' }}>Activity</label>
+        {/* Left arrow (prev day) */}
+        <button
+          style={btn}
+          onClick={() => setDateISO(d => addDays(d, -1))}
+          aria-label="Previous day"
+        >
+          ◀︎
+        </button>
+
+        {/* Date label */}
+        <div title={dateISO} style={{ minWidth: 220, textAlign: "center", fontWeight: 700 }}>
+          {pretty(dateISO)}
+        </div>
+
+        {/* RIGHT ARROW goes here (swapped with Today) */}
+        <button
+          style={atToday ? btnDisabled : btn}
+          onClick={() => !atToday && setDateISO(d => (d >= todayISO ? d : addDays(d, +1)))}
+          aria-label="Next day"
+          disabled={atToday}
+          title={atToday ? "Already at today" : "Next day"}
+        >
+          ▶︎
+        </button>
+
+        {/* TODAY button moves to the right-arrow’s old position */}
+        <button
+          style={btn}
+          onClick={() => setDateISO(todayISO)}
+          title="Jump to today"
+        >
+          Today
+        </button>
+
+        {/* Date picker (cannot choose a future date) */}
+        <input
+          type="date"
+          value={dateISO}
+          max={todayISO}
+          onChange={(e) => {
+            const v = e.target.value;
+            setDateISO(v > todayISO ? todayISO : v);
+          }}
+          style={{ padding: "6px 8px", borderRadius: 8, border: "1px solid #ddd" }}
+        />
+      </div>
+
+      {/* Add session form */}
+      <form
+        onSubmit={addSession}
+        style={{ display: "flex", gap: 12, alignItems: "flex-end", marginTop: 16, flexWrap: "wrap" }}
+      >
+        <label style={{ display: "flex", flexDirection: "column" }}>
+          <span style={{ fontSize: 12, color: "#667085" }}>Activity</span>
           <input
-            value={activity}
-            onChange={e => setActivity(e.target.value)}
+            type="text"
             placeholder="e.g., Reading"
-            style={{ padding: '10px 12px', width: 260, border: '1px solid #ddd', borderRadius: 8, fontSize: 16 }}
+            value={activity}
+            onChange={(e) => setActivity(e.target.value)}
+            style={{ padding: "8px 10px", border: "1px solid #D0D5DD", borderRadius: 8, minWidth: 220 }}
           />
-        </div>
+        </label>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <label style={{ fontSize: 14, color: '#555' }}>Minutes</label>
+        <label style={{ display: "flex", flexDirection: "column" }}>
+          <span style={{ fontSize: 12, color: "#667085" }}>Minutes</span>
           <input
-            value={minutes}
-            onChange={e => setMinutes(e.target.value)}
+            type="number"
+            min="1"
+            step="1"
             placeholder="e.g., 25"
-            inputMode="numeric"
-            style={{ padding: '10px 12px', width: 160, border: '1px solid #ddd', borderRadius: 8, fontSize: 16 }}
+            value={minutes}
+            onChange={(e) => setMinutes(e.target.value)}
+            style={{ padding: "8px 10px", border: "1px solid #D0D5DD", borderRadius: 8, width: 120 }}
           />
-        </div>
+        </label>
 
         <button
           type="submit"
           style={{
-            background: '#2753ff',
-            color: '#fff',
-            border: 'none',
-            borderRadius: 10,
-            padding: '12px 18px',
-            fontSize: 16,
-            fontWeight: 700,
-            cursor: 'pointer',
-            marginTop: 20,
+            padding: "10px 14px",
+            borderRadius: 8,
+            background: isFuture ? "#9CA3AF" : "#1D4ED8",
+            color: "#fff",
+            border: 0,
+            cursor: isFuture ? "not-allowed" : "pointer",
           }}
+          disabled={isFuture}
+          title={isFuture ? "Can't add to a future date" : "Add session"}
         >
           Add session
         </button>
+
+        {error && <div style={{ color: "#B42318", fontSize: 13 }}>{error}</div>}
+
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          <button type="button" onClick={clearDay} style={btn}>
+            Clear this day
+          </button>
+          <button type="button" onClick={clearAll} style={btn}>
+            Clear ALL
+          </button>
+        </div>
       </form>
 
-      {/* The new canvas-based word cloud */}
-      <WordCloud2 data={items} width={1000} height={560} color="#111" />
-
-      {/* tiny helper to clear everything while testing */}
-      <div style={{ marginTop: 12 }}>
-        <button
-          onClick={() => { if (confirm('Clear all activities?')) setItems([]); }}
-          style={{ background:'#f3f4f6', border:'1px solid #e5e7eb', padding:'8px 12px', borderRadius:8, cursor:'pointer' }}
-        >
-          Clear all
-        </button>
+      {/* Cloud */}
+      <div style={{ marginTop: 16 }}>
+        {cloudData.length === 0 ? (
+          <p style={{ color: "#667085" }}>
+            No activities logged for {pretty(dateISO)} — add one above (or switch dates).
+          </p>
+        ) : (
+          <WordCloud2 data={cloudData} width={1000} height={560} color="#111" />
+        )}
       </div>
     </div>
   );
