@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import cloud from 'd3-cloud';
+import * as cloud from 'd3-cloud';
 
 /* ---------- Deterministic RNG: same data -> same layout ---------- */
 function hashString(str) {
@@ -32,6 +32,9 @@ export default function D3WordCloud({
   data,
   width = 900,
   height = 520,
+  color = "#3b82f6",
+  selectedWord = null,
+  onWordClick,
   layoutKey, // e.g., "2025-W41" for weekly, "2025-10" for monthly
 }) {
   // Normalize input
@@ -59,12 +62,15 @@ export default function D3WordCloud({
 
   const [layoutWords, setLayoutWords] = useState([]);
   const runningRef = useRef(false);
+  const svgRef = useRef(null);
 
   useEffect(() => {
     if (!words.length || runningRef.current) {
       if (!words.length) setLayoutWords([]);
       return;
     }
+    
+    console.log('D3WordCloud: Starting layout with', words.length, 'words');
     runningRef.current = true;
 
     // Deterministic RNG -> d3-cloud uses it for initial offsets
@@ -88,7 +94,7 @@ export default function D3WordCloud({
         text: w.text,
         value: w.value,
         size: fontSize(w.value),
-        fill: FILL,
+        fill: w.text === selectedWord ? '#f59e0b' : color,
       }));
 
     const layout = cloud()
@@ -101,20 +107,56 @@ export default function D3WordCloud({
       .fontSize(d => d.size)
       .random(rng)                // deterministic placement
       .on('end', ws => {
-        setLayoutWords(ws);       // NOTE: no post-process “push” (prevents overlaps)
+        console.log('D3WordCloud: Layout completed with', ws.length, 'words');
+        setLayoutWords(ws);       // NOTE: no post-process "push" (prevents overlaps)
         runningRef.current = false;
       });
 
     layout.start();
     return () => { try { layout.stop?.(); } catch {} runningRef.current = false; };
-  }, [words, tunedWidth, tunedHeight, derivedKey]);
+  }, [words, tunedWidth, tunedHeight, derivedKey, color, selectedWord]);
 
-  if (!layoutWords.length) return null;
+  if (!layoutWords.length) {
+    console.log('D3WordCloud: No layout words, returning null');
+    return null;
+  }
 
   const cx = tunedWidth / 2, cy = tunedHeight / 2;
 
+  // Add click handler
+  useEffect(() => {
+    if (!onWordClick) return;
+
+    const handleClick = (event) => {
+      const textElement = event.target;
+      if (textElement.tagName === 'text') {
+        const wordText = textElement.textContent;
+        onWordClick(wordText);
+      }
+    };
+
+    const svg = svgRef.current;
+    if (svg) {
+      svg.addEventListener('click', handleClick);
+      svg.style.cursor = 'pointer';
+    }
+
+    return () => {
+      if (svg) {
+        svg.removeEventListener('click', handleClick);
+      }
+    };
+  }, [onWordClick]);
+
   return (
-    <svg width={tunedWidth} height={tunedHeight} role="img" aria-label="Word cloud">
+    <svg 
+      ref={svgRef}
+      width={tunedWidth} 
+      height={tunedHeight} 
+      role="img" 
+      aria-label="Word cloud"
+      style={{ cursor: 'pointer' }}
+    >
       <g transform={`translate(${cx}, ${cy})`}>
         {layoutWords.map((w, i) => (
           <text
@@ -130,6 +172,7 @@ export default function D3WordCloud({
               letterSpacing: 0.2,
               userSelect: 'none',
               textRendering: 'geometricPrecision',
+              cursor: 'pointer',
             }}
             title={`${w.text}: ${w.value} min`}
           >
