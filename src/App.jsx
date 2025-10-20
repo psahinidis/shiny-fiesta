@@ -1,8 +1,10 @@
 import React, { useMemo, useState } from "react";
 import WordCloud2 from "./components/WordCloud2";
+import JournalPanel from "./components/JournalPanel";
 
 const STORAGE_KEY = "activity-tracker:sessions:v1";
 const DATE_KEY    = "activity-tracker:lastDate:v1";
+const JOURNAL_KEY = "activity-tracker:journal:v1";
 
 /* ---------------- date helpers ---------------- */
 const toISODate = (d) => {
@@ -56,6 +58,21 @@ export default function App() {
     }
   });
 
+  // Load journal entries from localStorage
+  const [journalEntries, setJournalEntries] = useState(() => {
+    try {
+      const raw = localStorage.getItem(JOURNAL_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // Journal panel state
+  const [isPanelOpen, setIsPanelOpen] = useState(false);
+  const [selectedWord, setSelectedWord] = useState("");
+
   // simple form state
   const [activity, setActivity] = useState("");
   const [minutes, setMinutes] = useState("");
@@ -74,6 +91,13 @@ export default function App() {
       localStorage.setItem(DATE_KEY, dateISO);
     } catch {}
   }, [dateISO]);
+
+  /** Save journal entries on change */
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(JOURNAL_KEY, JSON.stringify(journalEntries));
+    } catch {}
+  }, [journalEntries]);
 
   const todayISO = toISODate(new Date());
   const isFuture = dateISO > todayISO;        // ISO YYYY-MM-DD compares correctly as strings
@@ -113,6 +137,47 @@ export default function App() {
     setSessions([]);
     try { localStorage.removeItem(STORAGE_KEY); } catch {}
   }
+
+  function handleWordClick(word) {
+    setSelectedWord(word);
+    setIsPanelOpen(true);
+  }
+
+  function handleClosePanel() {
+    setIsPanelOpen(false);
+    setSelectedWord("");
+  }
+
+  function handleSaveJournalEntry(entry) {
+    setJournalEntries(prev => [...prev, entry]);
+  }
+
+  function handleUpdateJournalEntry(entryId, newText) {
+    setJournalEntries(prev =>
+      prev.map(entry =>
+        entry.id === entryId
+          ? { ...entry, text: newText, timestamp: new Date().toISOString() }
+          : entry
+      )
+    );
+  }
+
+  function handleDeleteJournalEntry(entryId) {
+    setJournalEntries(prev => prev.filter(entry => entry.id !== entryId));
+  }
+
+  // Filter journal entries for the selected word and current date
+  const currentJournalEntries = useMemo(() => {
+    return journalEntries.filter(
+      entry => entry.word === selectedWord && entry.dateISO === dateISO
+    );
+  }, [journalEntries, selectedWord, dateISO]);
+
+  // Get total minutes for the selected word on current date
+  const selectedWordMinutes = useMemo(() => {
+    const wordData = cloudData.find(item => item.text === selectedWord);
+    return wordData ? wordData.value : 0;
+  }, [cloudData, selectedWord]);
 
   // button styles
   const btn = {
@@ -241,9 +306,28 @@ export default function App() {
             No activities logged for {pretty(dateISO)} — add one above (or switch dates).
           </p>
         ) : (
-          <WordCloud2 data={cloudData} width={1000} height={560} color="#111" />
+          <WordCloud2 
+            data={cloudData} 
+            width={1000} 
+            height={560}
+            selectedWord={selectedWord}
+            onWordClick={handleWordClick}
+          />
         )}
       </div>
+
+      {/* Journal Panel */}
+      <JournalPanel
+        isOpen={isPanelOpen}
+        onClose={handleClosePanel}
+        selectedWord={selectedWord}
+        dateISO={dateISO}
+        totalMinutes={selectedWordMinutes}
+        entries={currentJournalEntries}
+        onSave={handleSaveJournalEntry}
+        onUpdate={handleUpdateJournalEntry}
+        onDelete={handleDeleteJournalEntry}
+      />
     </div>
   );
 }
