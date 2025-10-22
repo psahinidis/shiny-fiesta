@@ -12,6 +12,7 @@ import React, { useState, useEffect } from 'react';
  * @param {function} onSave - Callback when saving a new entry
  * @param {function} onUpdate - Callback when updating an entry
  * @param {function} onDelete - Callback when deleting an entry
+ * @param {function} onDeleteActivity - Callback when deleting the entire activity
  */
 export default function JournalPanel({ 
   isOpen, 
@@ -23,6 +24,7 @@ export default function JournalPanel({
   onSave,
   onUpdate,
   onDelete,
+  onDeleteActivity,
 }) {
   const [journalText, setJournalText] = useState('');
   const [editingId, setEditingId] = useState(null);
@@ -81,6 +83,12 @@ export default function JournalPanel({
   const handleDelete = (entryId) => {
     if (confirm('Are you sure you want to delete this journal entry?')) {
       onDelete(entryId);
+    }
+  };
+
+  const handleDeleteActivity = () => {
+    if (confirm(`Are you sure you want to delete the entire "${selectedWord}" activity and all its journal entries? This action cannot be undone.`)) {
+      onDeleteActivity();
     }
   };
 
@@ -164,17 +172,18 @@ export default function JournalPanel({
             </div>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleDeleteActivity}
             style={{
               background: 'transparent',
               border: 'none',
               fontSize: 28,
               cursor: 'pointer',
-              color: '#6b7280',
+              color: '#ef4444',
               padding: '0 8px',
               lineHeight: 1,
             }}
-            aria-label="Close panel"
+            aria-label="Delete activity"
+            title="Delete this activity and all journal entries"
           >
             ×
           </button>
