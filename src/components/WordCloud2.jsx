@@ -10,15 +10,20 @@ import WordCloud from "wordcloud";
  *   data: [{ text: string, value: number }]
  *   width?: number (default 900)
  *   height?: number (default 520)
- *   color?: string (default '#111')
+ *   color?: string (default '#3b82f6')
+ *   selectedWord?: string (word that's currently selected)
+ *   onWordClick?: function
  */
 export default function WordCloud2({
   data = [],
   width = 900,
   height = 520,
-  color = "#111",
+  color = "#3b82f6",
+  selectedWord = null,
+  onWordClick,
 }) {
   const canvasRef = useRef(null);
+  const wordBoundsRef = useRef([]);
 
   // Clean and sort once
   const list = useMemo(() => {
@@ -54,16 +59,36 @@ export default function WordCloud2({
       return Math.max(MIN_PX, Math.min(MAX_PX, px));
     };
 
+    // Custom padding function: balanced spacing - more for large words, less for small
+    const paddingFunction = (d) => {
+      const fontSize = weightFactor(d[1]);
+      // Progressive padding: small words get less padding, large words get more
+      if (fontSize < 20) {
+        return 4; // Small words: minimal padding
+      } else if (fontSize < 40) {
+        return 6; // Medium words: moderate padding
+      } else {
+        return Math.max(8, Math.round(fontSize * 0.12)); // Large words: 12% padding
+      }
+    };
+
     // Clear any previous render
     const ctx = canvas.getContext("2d");
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+    // Track word positions for click detection
+    wordBoundsRef.current = [];
+
     // Render
     WordCloud(canvas, {
       list,
-      gridSize: Math.round((width + height) / 120), // smaller -> denser
+      gridSize: Math.round((width + height) / 100), // balanced grid size for condensed look
       weightFactor,
-      color: () => color,            // one color
+      padding: paddingFunction,      // custom padding based on word size
+      color: (word) => {
+        // Highlight selected word in amber-500 (yellow), others use default blue
+        return word === selectedWord ? '#f59e0b' : color;
+      },
       backgroundColor: "rgba(0,0,0,0)",
       rotateRatio: 0,                // no rotation
       rotationSteps: 0,
@@ -72,13 +97,79 @@ export default function WordCloud2({
       shrinkToFit: true,             // reduce a word if it wouldn't fit (prevents overlap/clipping)
       minSize: 0,                    // allow shrinkToFit to go small if necessary
       clearCanvas: false,            // we clear manually above
-      // shapes: 'square',           // default 'circle'; 'square' can feel tighter; try both
+      // shapes: 'square',           // back to circles for more natural word cloud look
       classes: "wc2-word",           // optional CSS class for hover effects
       // NOTE: wordcloud2 places words on a discrete grid -> no overlap by design
+      hover: (item, dimension, event) => {
+        // Store word bounds for click detection
+        if (item && dimension) {
+          const existing = wordBoundsRef.current.find(w => w.text === item[0]);
+          if (!existing) {
+            wordBoundsRef.current.push({
+              text: item[0],
+              x: dimension.x,
+              y: dimension.y,
+              w: dimension.w,
+              h: dimension.h,
+            });
+          }
+        }
+      },
     });
 
     // No special cleanup needed; canvas is reused
-  }, [list, width, height, color]);
+  }, [list, width, height, color, selectedWord]);
+
+  // Add click handler
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !onWordClick) return;
+
+    const handleClick = (event) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+
+      // Find all words that contain the click point
+      const matchingWords = [];
+      for (const word of wordBoundsRef.current) {
+        if (
+          x >= word.x &&
+          x <= word.x + word.w &&
+          y >= word.y &&
+          y <= word.y + word.h
+        ) {
+          matchingWords.push(word);
+        }
+      }
+
+      // If multiple words match (overlapping bounds), choose the one with center closest to click
+      if (matchingWords.length > 0) {
+        let bestMatch = matchingWords[0];
+        let minDistance = Infinity;
+
+        for (const word of matchingWords) {
+          const centerX = word.x + word.w / 2;
+          const centerY = word.y + word.h / 2;
+          const distance = Math.sqrt(Math.pow(x - centerX, 2) + Math.pow(y - centerY, 2));
+          
+          if (distance < minDistance) {
+            minDistance = distance;
+            bestMatch = word;
+          }
+        }
+
+        onWordClick(bestMatch.text);
+      }
+    };
+
+    canvas.addEventListener('click', handleClick);
+    canvas.style.cursor = 'pointer';
+
+    return () => {
+      canvas.removeEventListener('click', handleClick);
+    };
+  }, [onWordClick]);
 
   return (
     <div
